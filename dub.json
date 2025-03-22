@@ -1,0 +1,12 @@
+{
+	"authors": [
+		"Mina Kamel"
+	],
+	"copyright": "Copyright © 2025, Mina Kamel",
+	"dependencies": {
+		"dotenv": "~>0.1.1"
+	},
+	"description": "A wrapper for the bluesky api",
+	"license": "MIT",
+	"name": "bsky_d"
+}
