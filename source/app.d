@@ -1,9 +1,11 @@
 import std.stdio;
 import dotenv;
 import std.json;
-import std.net.curl;
 import std.array;
 import std.conv;
+import std.string;
+import std.utf;
+import std.net.curl;
 
 class Auth
 {
@@ -48,12 +50,26 @@ class Bsky
     }
 }
 
+class FailedGetRequest : Exception
+{
+    this(string msg, string file = __FILE__, size_t line = __LINE__, Throwable nextInChain = null) pure nothrow @nogc @safe
+    {
+        super(msg, file, line, nextInChain);
+    }
+}
+
 struct Response
 {
-    JSONValue response_body;
-    int status_code;
+    string response_body;
+    string status_code;
     string[string] headers;
+
+    string toString() const
+    {
+        return response_body;   
+    }
 }
+
 
 class Client
 {
@@ -71,73 +87,69 @@ class Client
         this.refresh_token = refresh_token;
     }
 
-    Response get_request(string ext_url, string[string] headers = null)
+    auto get_request(string ext_url, string[string] headers = null)
     {
-        auto http = HTTP();
+        Response response;
         string url = base_url ~ ext_url;
-        http.addRequestHeader("Content-Type", "application/json");
-        http.addRequestHeader("Authorization", "Bearer " ~ access_token);
-        
+        auto http = HTTP();
         if (headers !is null) {
             foreach (key, value; headers)
             {
                 http.addRequestHeader(key, value);
             }
         }
-
-        auto response = Response();
-
+        
         http.url(url);
-        http.method(HTTP.Method.get);
+        http.method(http.Method.get);
+        http.addRequestHeader("Content-Type", "application/json");
+        http.addRequestHeader("Authorization", "Bearer " ~ access_token);
 
-        http.onReceiveStatusLine = (HTTP.StatusLine status_line) {
-            response.status_code = to!int(to!string(status_line).split(" ")[0]);
+        http.onReceive = (ubyte[] data) {
+            response.response_body = cast(string)data;
+            return data.length;
         };
 
         http.onReceiveHeader = (in char[] key, in char[] value) {
             response.headers[to!string(key)] = to!string(value);
         };
 
-        http.onReceive = (ubyte[] data) {
-            response.response_body = parseJSON(cast(string)data);
-            return data.length;
+        http.onReceiveStatusLine = (HTTP.StatusLine status) {
+            response.status_code = to!string(status.code);
         };
 
         http.perform();
         return response;
     }
 
-    Response post_request(string ext_url, JSONValue req_body, string[string] headers = null, )
+    auto post_request(string ext_url, JSONValue req_body, string[string] headers = null)
     {
+        Response response;
         string url = base_url ~ ext_url;
         auto http = HTTP();
-        http.url(url);
-        http.method(HTTP.Method.post);
-        http.addRequestHeader("Content-Type", "application/json");
-        http.addRequestHeader("Authorization", "bearer " ~ access_token);
-
         if (headers !is null) {
-            foreach (key, val; headers)
+            foreach (key, value; headers)
             {
-                http.addRequestHeader(key, val);
+                http.addRequestHeader(key, value);
             }
         }
+        
+        http.url(url);
+        http.method(http.Method.post);
+        http.addRequestHeader("Content-Type", "application/json");
+        http.addRequestHeader("Authorization", "Bearer " ~ access_token);
+        http.postData = req_body.toString();
 
-        auto response = Response();
-
-        http.postData = req_body;
-
-        http.onReceiveStatusLine = (HTTP.StatusLine status_line) {
-            response.status_code = to!int(to!string(status_line).split(" ")[0]);
+        http.onReceive = (ubyte[] data) {
+            response.response_body = cast(string)data;
+            return data.length;
         };
 
         http.onReceiveHeader = (in char[] key, in char[] value) {
             response.headers[to!string(key)] = to!string(value);
         };
 
-        http.onReceive = (ubyte[] data) {
-            response.response_body = parseJSON(cast(string)data);
-            return data.length;
+        http.onReceiveStatusLine = (HTTP.StatusLine status) {
+            response.status_code = to!string(status.code);
         };
 
         http.perform();
@@ -177,6 +189,94 @@ class Actor
     {
         return bsky.client.post_request("/xrpc/app.bsky.actor.putPreferences", value);
     }
+
+    auto search_actors_typeahead(string query, string limit = "")
+    {
+        string url = "/xrpc/app.bsky.actor.searchActorsTypeahead" ~ "?q=" ~ query;
+        if (limit.length > 0)
+        {
+            url ~= "&limit=" ~ limit;
+        }
+        return bsky.client.get_request(url);
+    }
+
+    auto search_actors(string query, string limit = "", string cursor = "")
+    {
+        string url = "/xrpc/app.bsky.actor.searchActors" ~ "?q=" ~ query;
+        if (limit.length > 0)
+        {
+            url ~= "&limit=" ~ limit;
+        }
+
+        if (cursor.length > 0)
+        {
+            url ~= "&cursor=" ~ cursor;
+        }
+
+        return bsky.client.get_request(url);
+    }
+}
+
+class Feed
+{
+    Bsky bsky;
+    this(Bsky bsky)
+    {
+        this.bsky = bsky;
+    }
+
+    auto describe_feed_generator()
+    {
+        return bsky.client.get_request("/xrpc/app.bsky.feed.describeFeedGenerator");
+    }
+
+    auto get_actor_feeds(string actor, string limit = "", string cursor = "")
+    {
+        string url = "/xrpc/app.bsky.feed.getActorFeeds" ~ "?actor=" ~ actor;
+        if (limit.length > 0)
+        {
+            url ~= "&limit=" ~ limit;
+        }
+
+        if (cursor.length > 0)
+        {
+            url ~= "&cursor=" ~ cursor;
+        }
+
+        return bsky.client.get_request(url);
+    }
+
+    auto get_actor_likes(string actor, string limit = "", string cursor = "")
+    {
+        string url = "/xrpc/app.bsky.feed.getActorLikes" ~ "?actor=" ~ actor;
+        if (limit.length > 0)
+        {
+            url ~= "&limit=" ~ limit;
+        }
+
+        if (cursor.length > 0)
+        {
+            url ~= "&cursor=" ~ cursor;
+        }
+
+        return bsky.client.get_request(url);
+    }
+
+    auto get_author_feed(string actor, string limit = "", string cursor = "")
+    {
+        string url = "/xrpc/app.bsky.feed.getAuthorFeed" ~ "?actor=" ~ actor;
+        if (limit.length > 0)
+        {
+            url ~= "&limit=" ~ limit;
+        }
+
+        if (cursor.length > 0)
+        {
+            url ~= "&cursor=" ~ cursor;
+        }
+
+        return bsky.client.get_request(url);
+    }
 }
 
 void main()
@@ -188,13 +288,13 @@ void main()
     string access_token = Env["access_token"];
     string refresh_token = Env["refresh_token"];
     
-    /*
-    auto auth = new Auth(handle, app_password);
-    writeln(auth.authorize());
-    */
+    //auto auth = new Auth(handle, app_password);
+    //writeln(auth.authorize());    
+    
     
     auto client = new Client(handle, app_password, access_token, refresh_token);
     auto bsky = new Bsky(client);
     auto actor = new Actor(bsky);
-    writeln(actor.get_preferences());
+    auto feed = new Feed(bsky);
+    writeln(feed.get_author_feed(handle));
 }
